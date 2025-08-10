@@ -1,6 +1,6 @@
 # DevOps Case Study - Detaylı Proje Analizi
 
-[![Devops(https://www.google.com/url?sa=i&url=https%3A%2F%2Fnextlinklabs.com%2Fresources%2Finsights%2Fbuilding-cicd-pipeline-website-gitlab&psig=AOvVaw1JgFUfz0A6alIjAVN6l_lA&ust=1754937483945000&source=images&cd=vfe&opi=89978449&ved=0CBUQjRxqFwoTCJCs7M7xgI8DFQAAAAAdAAAAABAE)](https://youtu.be/j5BgFAAyjL0)
+[](https://youtu.be/j5BgFAAyjL0)
 
 ## Proje Genel Bakış
 
