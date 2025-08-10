@@ -1,0 +1,211 @@
+---
+# ---- Vars / defaults (adım adım) ----
+- name: Set vault_url and token defaults
+  ansible.builtin.set_fact:
+    vault_url:  "{{ vault_url  | default(lookup('env','VAULT_ADDR')  | default('http://127.0.0.1:8200', true), true) }}"
+    vault_token: "{{ vault_token | default(lookup('env','VAULT_TOKEN') | default('', true), true) }}"
+    vault_kv_mount: "{{ vault_kv_mount | default('secret', true) }}"
+    vault_secret_path: "{{ vault_secret_path | default('nginx_creds', true) }}"
+
+- name: Set artifacts dir default (no self-reference)
+  ansible.builtin.set_fact:
+    approle_creds_dir: "{{ vars.get('approle_creds_dir', playbook_dir ~ '/artifacts') }}"
+
+- name: Set artifacts file default (uses dir set above)
+  ansible.builtin.set_fact:
+    approle_creds_file: "{{ vars.get('approle_creds_file', approle_creds_dir ~ '/approle_credentials.yml') }}"
+
+# ---- Safety checks ----
+- name: Assert vault_token is provided
+  ansible.builtin.assert:
+    that:
+      - vault_token is defined
+      - (vault_token | length) > 0
+    fail_msg: "vault_token tanımlı değil. Env/vars ile sağlayın."
+
+# ---- Health ----
+- name: Wait for Vault to be ready
+  uri:
+    url: "{{ vault_url }}/v1/sys/health"
+    method: GET
+    status_code: [200,429,472,473,501,503]
+  register: vault_health_check
+  failed_when: false
+  retries: 30
+  delay: 5
+  until: vault_health_check.status is defined and
+         vault_health_check.status in [200,429,472,473]
+
+# ---- (Dev modda gereksiz) Ek KV mount örneği; kapalı bırak ----
+- name: Enable extra KV v2 at /secrets (optional)
+  uri:
+    url: "{{ vault_url }}/v1/sys/mounts/secrets"
+    method: POST
+    headers: { X-Vault-Token: "{{ vault_token }}" }
+    body_format: json
+    body:
+      type: "kv-v2"
+      options: { version: "2" }
+    status_code: [200,204,400]
+  when: false
+  ignore_errors: yes
+  no_log: true
+
+# ---- Secret write (KV v2, secret/) ----
+- name: Write a secret for NGINX basic auth (KV v2)
+  uri:
+    url: "{{ vault_url }}/v1/{{ vault_kv_mount }}/data/{{ vault_secret_path }}"
+    method: POST
+    headers: { X-Vault-Token: "{{ vault_token }}" }
+    body_format: json
+    body:
+      data:
+        credentials: "hepsiburada:{PLAIN}devops"
+    status_code: [200,204]
+  no_log: true
+
+# ---- Policy (KV v2 path) ----
+- name: Create read-only policy for NGINX credentials
+  uri:
+    url: "{{ vault_url }}/v1/sys/policies/acl/nginx-creds-readonly"
+    method: POST
+    headers: { X-Vault-Token: "{{ vault_token }}" }
+    body_format: json
+    body:
+      policy: |
+        path "{{ vault_kv_mount }}/data/{{ vault_secret_path }}" {
+          capabilities = ["read"]
+        }
+    status_code: [200,204]
+  no_log: true
+
+# ---- AppRole enable & role ----
+- name: Enable AppRole auth method
+  uri:
+    url: "{{ vault_url }}/v1/sys/auth/approle"
+    method: POST
+    headers: { X-Vault-Token: "{{ vault_token }}" }
+    body_format: json
+    body: { type: "approle" }
+    status_code: [200,204,400]
+  ignore_errors: yes
+  no_log: true
+
+- name: Create an AppRole role for the proxy
+  uri:
+    url: "{{ vault_url }}/v1/auth/approle/role/nginx-app"
+    method: POST
+    headers: { X-Vault-Token: "{{ vault_token }}" }
+    body_format: json
+    body:
+      policies: ["default", "nginx-creds-readonly"]
+      token_ttl: "1h"
+      token_max_ttl: "4h"
+      bind_secret_id: true
+      secret_id_ttl: "24h"
+    status_code: [200,204]
+  no_log: true
+
+# ---- Fetch Role ID / Secret ID ----
+- name: Get AppRole Role ID
+  uri:
+    url: "{{ vault_url }}/v1/auth/approle/role/nginx-app/role-id"
+    method: GET
+    headers: { X-Vault-Token: "{{ vault_token }}" }
+    status_code: [200]
+  register: approle_role_id_response
+  no_log: true
+
+- name: Set role_id fact
+  ansible.builtin.set_fact:
+    approle_role_id: "{{ approle_role_id_response.json.data.role_id }}"
+
+- name: Generate a new AppRole Secret ID
+  uri:
+    url: "{{ vault_url }}/v1/auth/approle/role/nginx-app/secret-id"
+    method: POST
+    headers: { X-Vault-Token: "{{ vault_token }}" }
+    body_format: json
+    body: {}
+    status_code: [200]
+  register: approle_secret_id_response
+  no_log: true
+
+- name: Set secret_id fact
+  ansible.builtin.set_fact:
+    approle_secret_id: "{{ approle_secret_id_response.json.data.secret_id }}"
+
+# ---- Save creds to controller (mutlak yol + dir ensure) ----
+- name: Ensure artifacts dir exists on controller
+  delegate_to: localhost
+  run_once: true
+  ansible.builtin.file:
+    path: "{{ approle_creds_dir }}"
+    state: directory
+    mode: "0755"
+
+- name: Save AppRole credentials for the next play
+  delegate_to: localhost
+  run_once: true
+  ansible.builtin.copy:
+    content: |
+      approle_role_id: "{{ approle_role_id }}"
+      approle_secret_id: "{{ approle_secret_id }}"
+    dest: "{{ approle_creds_file }}"
+    mode: "0600"
+  no_log: true
+
+# ---- Test login & read ----
+- name: Test AppRole login
+  uri:
+    url: "{{ vault_url }}/v1/auth/approle/login"
+    method: POST
+    body_format: json
+    body:
+      role_id: "{{ approle_role_id }}"
+      secret_id: "{{ approle_secret_id }}"
+    status_code: [200]
+  register: approle_login_test
+  no_log: true
+
+- name: Set AppRole token for testing
+  ansible.builtin.set_fact:
+    approle_token: "{{ approle_login_test.json.auth.client_token }}"
+
+- name: Test reading NGINX credentials with AppRole token
+  uri:
+    url: "{{ vault_url }}/v1/{{ vault_kv_mount }}/data/{{ vault_secret_path }}"
+    method: GET
+    headers: { X-Vault-Token: "{{ approle_token }}" }
+    status_code: [200]
+  register: secret_read_test
+  no_log: true
+
+# ---- Optional: htpasswd üret ve güncelle ----
+- name: Create htpasswd format credentials
+  shell: 'echo -n "hepsiburada:$(openssl passwd -apr1 devops)"'
+  register: htpasswd_creds
+  changed_when: false
+
+- name: Update NGINX credentials with htpasswd format
+  uri:
+    url: "{{ vault_url }}/v1/{{ vault_kv_mount }}/data/{{ vault_secret_path }}"
+    method: POST
+    headers: { X-Vault-Token: "{{ vault_token }}" }
+    body_format: json
+    body:
+      data:
+        credentials: "{{ htpasswd_creds.stdout }}"
+        plain_credentials: "hepsiburada:{PLAIN}devops"
+    status_code: [200,204]
+  no_log: true
+
+- debug:
+    msg:
+      - "✅ KV v2 ({{ vault_kv_mount }}) ready"
+      - "✅ Secret stored at {{ vault_kv_mount }}/data/{{ vault_secret_path }}"
+      - "✅ Policy nginx-creds-readonly applied"
+      - "✅ AppRole nginx-app created"
+      - "✅ AppRole creds saved to {{ approle_creds_file }}"
+      - "✅ Smoke test passed"
+  no_log: true

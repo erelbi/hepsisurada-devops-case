@@ -1,0 +1,15 @@
+#!/bin/sh
+
+# AppRole kimlik bilgilerini agent'ın okuyacağı dosyalara yaz
+echo "{{ approle_role_id }}" > /etc/vault-agent.d/role_id
+echo "{{ approle_secret_id }}" > /etc/vault-agent.d/secret_id
+
+# NGINX'in okuyacağı htpasswd dosyasının şablonunu oluştur
+echo '{% raw %}{{ with secret "secret/data/nginx_creds" }}{{ .Data.data.credentials }}{{ end }}{% endraw %}' > /etc/vault-agent.d/htpasswd.ctmpl
+
+
+# Vault agent'ı arka planda başlat
+vault agent -config=/etc/vault-agent.d/agent.hcl &
+
+# NGINX'i ön planda başlat (container'ın çalışmaya devam etmesi için)
+nginx -g "daemon off;"

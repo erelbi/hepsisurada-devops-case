@@ -1,0 +1,262 @@
+---
+- name: Check status of entrypoint path
+  ansible.builtin.stat:
+    path: /usr/local/bin/entrypoint.sh
+  register: ep_stat
+
+- name: Check status of agent.hcl path
+  ansible.builtin.stat:
+    path: /etc/vault-agent.d/agent.hcl
+  register: agent_stat
+
+- name: Check status of default.conf path
+  ansible.builtin.stat:
+    path: /etc/nginx/conf.d/default.conf
+  register: nginx_conf_stat
+
+# Adım 2: Eğer yollar bir DİZİN olarak varsa, onları sil
+- name: Remove wrong entrypoint directory if it exists
+  ansible.builtin.file:
+    path: /usr/local/bin/entrypoint.sh
+    state: absent
+  when: ep_stat.stat.exists and ep_stat.stat.isdir
+
+- name: Remove wrong agent.hcl directory if it exists
+  ansible.builtin.file:
+    path: /etc/vault-agent.d/agent.hcl
+    state: absent
+  when: agent_stat.stat.exists and agent_stat.stat.isdir
+
+- name: Remove wrong default.conf directory if it exists
+  ansible.builtin.file:
+    path: /etc/nginx/conf.d/default.conf
+    state: absent
+  when: nginx_conf_stat.stat.exists and nginx_conf_stat.stat.isdir
+  
+- name: Load AppRole credentials from artifacts (controller)
+  delegate_to: localhost
+  run_once: true
+  ansible.builtin.include_vars:
+    file: "{{ playbook_dir }}/artifacts/approle_credentials.yml"
+
+# Görev 2: Vault CLI aracını indir ve kur
+- name: Download Vault binary
+  ansible.builtin.get_url:
+    url: "https://releases.hashicorp.com/vault/1.17.2/vault_1.17.2_linux_amd64.zip"
+    dest: /tmp/vault.zip
+    mode: '0644'
+
+- name: Create directory for Vault binary
+  ansible.builtin.file:
+    path: /usr/local/bin
+    state: directory
+    mode: '0755'
+
+- name: Extract Vault binary (without collection)
+  ansible.builtin.shell: |
+    cd /tmp
+    unzip -o vault.zip
+    mv vault /usr/local/bin/vault
+    chmod +x /usr/local/bin/vault
+  args:
+    creates: /usr/local/bin/vault
+
+- name: Verify Vault installation
+  ansible.builtin.command: /usr/local/bin/vault version
+  register: vault_version_output
+  changed_when: false
+
+- name: Display Vault version
+  ansible.builtin.debug:
+    msg: "{{ vault_version_output.stdout }}"
+
+# Görev 3: Vault Agent için yapılandırma dosyası oluştur
+- name: Create Vault Agent config directory
+  ansible.builtin.file:
+    path: /etc/vault-agent.d
+    state: directory
+    mode: '0755'
+
+- name: Create Vault Agent config file
+  ansible.builtin.copy:
+    dest: /etc/vault-agent.d/agent.hcl
+    mode: '0644'
+    content: |
+       pid_file = "/var/run/vault-agent.pid"
+
+       vault {
+         address = "http://vault-server:8200"
+       }
+       
+       auto_auth {
+         method "approle" {
+           mount_path = "auth/approle"
+           config = {
+             role_id_file_path = "/etc/vault-agent.d/role_id"
+             secret_id_file_path = "/etc/vault-agent.d/secret_id"
+             remove_secret_id_file_after_read = false
+           }
+         }
+       }
+       
+       template {
+         source      = "/etc/vault-agent.d/htpasswd.ctmpl"
+         destination = "/etc/nginx/htpasswd"
+         perms       = "0644"
+         command     = "nginx -s reload"
+       }
+
+# Görev 4: NGINX için yapılandırma dosyası oluştur
+- name: Create NGINX config directory
+  ansible.builtin.file:
+    path: /etc/nginx/conf.d
+    state: directory
+    mode: '0755'
+
+- name: Create NGINX config file
+  ansible.builtin.copy:
+    dest: /etc/nginx/conf.d/default.conf
+    mode: '0644'
+    content: |
+      server {
+      listen 80;
+      server_name localhost;
+
+      location / {
+          auth_basic "Restricted Content";
+          auth_basic_user_file /etc/nginx/htpasswd;
+          
+          root   /usr/share/nginx/html;
+          index  index.html index.htm;
+      }
+
+      # Vault health endpoint'ini reverse proxy yapalım
+      location /vault/v1/sys/health {
+          proxy_pass http://vault-server:8200/v1/sys/health;
+      }
+      }
+
+- name: Create basic auth file
+  ansible.builtin.copy:
+    dest: /etc/nginx/.htpasswd
+    mode: '0644'
+    content: |
+      # admin:admin (htpasswd generated)
+      admin:$apr1$rF8zKmH.$ZjEfKcKbsKOJ.8K3nW9PU0
+
+# Görev 5: Vault Agent ve NGINX'i başlatacak script'i oluştur
+- name: Create entrypoint script
+  ansible.builtin.copy:
+    dest: /usr/local/bin/entrypoint.sh
+    mode: '0755'
+    content: |
+       #!/bin/sh
+
+        # AppRole kimlik bilgilerini agent'ın okuyacağı dosyalara yaz
+        echo "{{ approle_role_id }}" > /etc/vault-agent.d/role_id
+        echo "{{ approle_secret_id }}" > /etc/vault-agent.d/secret_id
+
+        # NGINX'in okuyacağı htpasswd dosyasının şablonunu oluştur
+        echo '{% raw %}{{ with secret "secret/data/nginx_creds" }}{{ .Data.data.credentials }}{{ end }}{% endraw %}' > /etc/vault-agent.d/htpasswd.ctmpl
+
+
+        # Vault agent'ı arka planda başlat
+        vault agent -config=/etc/vault-agent.d/agent.hcl &
+
+        # NGINX'i ön planda başlat (container'ın çalışmaya devam etmesi için)
+        nginx -g "daemon off;"
+
+# Görev 6: Container'ı yeni entrypoint script'i ile yeniden başlat
+- name: Check if proxy-node container exists
+  ansible.builtin.shell: docker ps -a --filter "name=^/proxy-node$" --format "{{ '{{' }}.Names{{ '}}' }}"
+  register: container_check
+  changed_when: false
+  failed_when: false
+  delegate_to: localhost
+  run_once: true
+
+- name: Stop existing proxy-node container if running
+  ansible.builtin.shell: docker stop proxy-node
+  when: "'proxy-node' in container_check.stdout"
+  failed_when: false
+  delegate_to: localhost
+  run_once: true
+
+- name: Remove existing proxy-node container
+  ansible.builtin.shell: docker rm proxy-node
+  when: "'proxy-node' in container_check.stdout"
+  failed_when: false
+  delegate_to: localhost
+  run_once: true
+
+- name: Start new NGINX container with Vault Agent
+  ansible.builtin.shell: |
+    set -eu
+    docker run -d \
+      --name proxy-node \
+      --restart unless-stopped \
+      --network hepsi_devops_net \
+      -p 80:80 \
+      -p 443:443 \
+      -v /etc/vault-agent.d:/etc/vault-agent.d:ro \
+      -v /etc/nginx/conf.d:/etc/nginx/conf.d:ro \
+      -v /etc/nginx/.htpasswd:/etc/nginx/.htpasswd:ro \
+      -v /usr/local/bin/entrypoint.sh:/usr/local/bin/entrypoint.sh:ro \
+      -v /usr/local/bin/vault:/usr/local/bin/vault:ro \
+      -e VAULT_ADDR="{{ vault_url | default('http://vault-server:8200') }}" \
+      -e VAULT_ROLE_ID="{{ approle_role_id }}" \
+      -e VAULT_SECRET_ID="{{ approle_secret_id }}" \
+      nginx:stable \
+      bash -c "apt-get update && apt-get install -y python3 curl && /usr/local/bin/entrypoint.sh"
+  register: container_start
+  delegate_to: localhost
+  run_once: true
+
+- name: Wait for container to be ready
+  ansible.builtin.pause:
+    seconds: 15
+
+- name: Check container is running
+  ansible.builtin.shell: docker ps --filter "name=^/proxy-node$" --format "{{ '{{' }}.Status{{ '}}' }}"
+  register: container_status
+  changed_when: false
+  delegate_to: localhost
+  run_once: true
+
+- name: Get container logs
+  ansible.builtin.shell: docker logs proxy-node --tail 50
+  register: container_logs
+  changed_when: false
+  failed_when: false
+  delegate_to: localhost
+  run_once: true
+
+- name: Display container logs
+  ansible.builtin.debug:
+    msg: "{{ container_logs.stdout_lines }}"
+
+# Health check
+- name: Test NGINX is responding
+  ansible.builtin.uri:
+    url: "http://{{ ansible_host | default('localhost') }}/health"
+    method: GET
+    status_code: [200]
+  register: nginx_health_check
+  failed_when: false
+  delegate_to: localhost
+  run_once: true
+
+- name: Display health check result
+  ansible.builtin.debug:
+    msg: "NGINX health check - Status: {{ nginx_health_check.status | default('Failed') }}"
+
+- name: Display final status
+  ansible.builtin.debug:
+    msg:
+      - "✅ Vault binary downloaded and installed"
+      - "✅ Vault Agent configuration created"
+      - "✅ NGINX configuration created"  
+      - "✅ Entrypoint script created"
+      - "✅ Container restarted successfully"
+      - "AppRole ID: {{ approle_role_id }}"
+      - "Container Status: {{ container_status.stdout }}"

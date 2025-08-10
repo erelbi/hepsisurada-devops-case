@@ -1,0 +1,50 @@
+stages:
+  - validate
+  - provision
+  - configure
+
+
+validate:
+  stage: validate
+  before_script:
+    - cd terraform
+  script:
+    - terraform init
+    - terraform validate
+  tags:
+    - ansible-terraform
+
+provision:
+  stage: provision
+  before_script:
+    - cd terraform
+    - docker stop vault-server proxy-node || true
+    - docker rm -f vault-server proxy-node || true
+    - docker network rm hepsi_devops_net || true
+  script:
+    - terraform init
+    - terraform apply -auto-approve
+  artifacts:
+    paths:
+      - ansible/inventory.ini
+ 
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+  tags:
+    - ansible-terraform
+
+configure:
+  stage: configure
+  before_script:
+    - export ANSIBLE_HOST_KEY_CHECKING=False
+    - export VAULT_TOKEN=root
+    - export VAULT_ADDR=http://vault-server:8200
+    - export ANSIBLE_CONFIG=$CI_PROJECT_DIR/ansible/ansible.cfg
+  script:
+    - ansible-playbook -i ansible/inventory.ini ansible/playbook.yml -e "vault_token=${VAULT_TOKEN}"  -e "vault_url=${VAULT_ADDR}" 
+  dependencies:
+    - provision # provision işinden artifact'i al
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+  tags:
+    - ansible-terraform

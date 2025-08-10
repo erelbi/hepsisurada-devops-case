@@ -1,0 +1,23 @@
+pid_file = "/var/run/vault-agent.pid"
+
+vault {
+  address = "http://vault-server:8200"
+}
+
+auto_auth {
+  method "approle" {
+    mount_path = "auth/approle"
+    config = {
+      role_id_file_path = "/etc/vault-agent.d/role_id"
+      secret_id_file_path = "/etc/vault-agent.d/secret_id"
+      remove_secret_id_file_after_read = false
+    }
+  }
+}
+
+template {
+  source      = "/etc/vault-agent.d/htpasswd.ctmpl"
+  destination = "/etc/nginx/htpasswd"
+  perms       = "0644"
+  command     = "nginx -s reload"
+}

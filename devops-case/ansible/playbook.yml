@@ -1,0 +1,63 @@
+---
+- name: Configure Vault Server
+  hosts: vault-servers
+  gather_facts: no
+  pre_tasks:
+  - name: Update apk index
+    ansible.builtin.raw: |
+      set -eu
+      for i in 1 2 3; do apk update && break || (echo "apk update retry $i"; sleep 2); done
+    changed_when: false
+
+  - name: Install python3 + curl + certs
+    ansible.builtin.raw: |
+      set -eu
+      apk add --no-cache python3 ca-certificates curl
+      # ansible bazı modüllerde /usr/bin/python arar; yoksa linkle
+      [ -x /usr/bin/python ] || ln -sf /usr/bin/python3 /usr/bin/python
+
+  - name: Verify python3
+    ansible.builtin.raw: |
+      set -eu
+      python3 --version
+      python3 -c "import json,ssl; print('OK')"
+    changed_when: false
+  
+  - name: Use python3 for the rest of the play
+    ansible.builtin.set_fact:
+      ansible_python_interpreter: /usr/bin/python3
+
+  environment:
+    VAULT_ADDR: "http://{{ hostvars[inventory_hostname].ansible_host | default(inventory_hostname) }}:8200"
+  roles:
+    - vault_setup
+
+- name: Configure NGINX Proxy Node
+  hosts: proxy-nodes
+  gather_facts: no
+  pre_tasks:
+  - name: Update apt index
+    ansible.builtin.raw: |
+      set -eu
+      for i in 1 2 3; do apt update && break || (echo "apt update retry $i"; sleep 2); done
+    changed_when: false
+
+  - name: Install python3 + curl + certs
+    ansible.builtin.raw: |
+      set -eu
+      apt install -y python3 ca-certificates curl unzip
+      # ansible bazı modüllerde /usr/bin/python arar; yoksa linkle
+      [ -x /usr/bin/python ] || ln -sf /usr/bin/python3 /usr/bin/python
+
+  - name: Verify python3
+    ansible.builtin.raw: |
+      set -eu
+      python3 --version
+      python3 -c "import json,ssl; print('OK')"
+    changed_when: false
+  
+  - name: Use python3 for the rest of the play
+    ansible.builtin.set_fact:
+      ansible_python_interpreter: /usr/bin/python3
+  roles:
+    - proxy_setup
