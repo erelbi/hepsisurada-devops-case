@@ -1,4 +1,6 @@
-# Hepsiburada DevOps Case Study - Detaylı Proje Analizi
+# DevOps Case Study - Detaylı Proje Analizi
+
+[](https://youtu.be/j5BgFAAyjL0)
 
 ## Proje Genel Bakış
 
@@ -658,4 +660,15 @@ curl -s -H "X-Vault-Token: $VAULT_TOKEN" \
 
 ## Sonuç
 
-Bu proje, modern DevOps pratiklerini uygulayan kapsamlı bir case study'dir. GitLab CI/CD, Terraform ve Ansible araçlarının entegrasyonu ile güvenli, ölçeklenebilir ve sürdürülebilir bir altyapı otomasyon sistemi oluşturulmuştur. HashiCorp Vault entegrasyonu ile secret management best practice'leri implementasyonu, projenin enterprise düzeyde kullanıma hazır olduğunu göstermektedir.
+Bu proje, modern DevOps pratiklerini uygulayan kapsamlı bir case study'dir. GitLab CI/CD, Terraform ve Ansible araçlarının entegrasyonu ile güvenli, ölçeklenebilir ve sürdürülebilir bir altyapı otomasyon sistemi oluşturulmuştur. HashiCorp Vault entegrasyonu ile secret management best practice'leri implementasyonu, projenin  ~~ enterprise ~~  düzeyde kullanıma hazır olduğunu göstermektedir.
+
+## Eksikler
+
+- SSL/TLS Otomasyonu efor harcanmadı(mantığa uymadı)
+- Ansible templates üzerinden statik dosyaları almak yerine playbook da oluşturduk.
+- creds  süreç içerisinde verdik bu yanlış.
+- Zaman efektif kullanılamadı.
+- Çok fazla pipe line test edildi.
+- Süreç daha basit hale getirilebilir.
+- Nginx kapatılıp yeni ayar ve agent ile tekrar  ayağa kaldırılıyor bu sürdürebilir değil.
+- Vault'un playbooklarını kullanılmadı hataları çözmek yerine core ansible devam edildi.
