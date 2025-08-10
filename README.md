@@ -425,11 +425,7 @@ resource "docker_container" "nginx" {
 ### Inventory Yapısı
 
 ```ini
-[vault_servers]
-192.168.122.92 ansible_port=22 ansible_user=root ansible_ssh_private_key_file=/root/.ssh/id_rsa
-
-[nginx_servers]  
-192.168.122.92 ansible_port=22 ansible_user=root ansible_ssh_private_key_file=/root/.ssh/id_rsa
+Bu kısım önce otomatik oluşturuldu. Sonra manuele çevirildi
 ```
 
 ### Playbook Yapısı
@@ -476,6 +472,8 @@ Ana playbook (`playbook.yml`) şu görevleri içerir:
         username: "hepsiburada"
         password: "devops"
 ```
+
+Bu kısımda önce otomatik passwd create edildi. Daha sonra yaml içerisine direk passwd hash girildi.
 
 #### 4. Policy Oluşturma
 
