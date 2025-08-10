@@ -1,6 +1,7 @@
 # DevOps Case Study - Detaylı Proje Analizi
 
-[](https://youtu.be/j5BgFAAyjL0)
+### Proje Tanıtım Videosu
+[![Proje Video](https://img.youtube.com/vi/jNQXAC9IVRw/hqdefault.jpg)](https://youtu.be/j5BgFAAyjL0)
 
 ## Proje Genel Bakış
 
