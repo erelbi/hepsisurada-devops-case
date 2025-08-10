@@ -203,7 +203,7 @@
 # Health check
 - name: Test NGINX is responding
   ansible.builtin.uri:
-    url: "http://localhost/health"
+    url: "http://127.0.0.1/health"
     method: GET
     status_code: [200]
   register: nginx_health_check
