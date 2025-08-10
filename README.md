@@ -258,39 +258,29 @@ Firewall Rules:
 ## Proje Yapısı
 
 ```
-graph TD
-    A[devops-case] --> B[ansible]
-    A --> C[terraform]
-    A --> D[.gitlab-ci.yml]
-    
-    B --> E[files]
-    B --> F[roles]
-    B --> G[ansible.cfg]
-    B --> H[playbook.yml]
-    
-    F --> I[proxy_setup]
-    F --> J[vault_setup]
-    
-    I --> K[tasks/main.yml]
-    I --> L[templates]
-    
-    L --> M[agent.hcl.j2]
-    L --> N[entrypoint.sh.j2]
-    L --> O[nginx.conf.j2]
-    
-    J --> P[tasks/main.yml]
-    
-    C --> Q[inventory.tf]
-    C --> R[inventory.tpl]
-    C --> S[main.tf]
-    C --> T[outputs.tf]
-    
-    style A fill:#e1f5fe
-    style B fill:#f3e5f5
-    style C fill:#e8f5e8
-    style F fill:#fff3e0
-    style I fill:#fce4ec
-    style J fill:#fce4ec
+devops-case/
+├── .gitlab-ci.yml              # GitLab CI/CD pipeline tanımları
+├── ansible/                    # Ansible konfigürasyon dizini
+│   ├── files/                  # Static dosyalar(test)
+│   ├── roles/                  # Ansible rolleri
+│   │   ├── proxy_setup/        # Nginx proxy konfigürasyon rolü
+│   │   │   ├── tasks/
+│   │   │   │   └── main.yml    # Nginx setup görevleri
+│   │   │   └── templates/      # Jinja2 template dosyaları
+│   │   │       ├── agent.hcl.j2      # Vault agent konfigürasyonu
+│   │   │       ├── entrypoint.sh.j2  # Container başlangıç scripti
+│   │   │       └── nginx.conf.j2     # Nginx konfigürasyon template'i
+│   │   └── vault_setup/        # Vault konfigürasyon rolü
+│   │       └── tasks/
+│   │           └── main.yml    # Vault setup görevleri
+│   ├── ansible.cfg             # Ansible konfigürasyon dosyası
+│   └── playbook.yml            # Ana Ansible playbook
+└── terraform/                  # Terraform altyapı kodları
+    ├── inventory.tf            # Ansible inventory oluşturma
+    ├── inventory.tpl           # Inventory template dosyası
+    ├── main.tf                 # Ana Terraform konfigürasyonu
+    └── outputs.tf              # Terraform çıktıları
+
 ```
 
 ## GitLab CI/CD Pipeline
